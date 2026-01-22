@@ -1,0 +1,19 @@
+Cursor of Power
+Copyright (c) 2025 Bobbels
+
+This addon is licensed under the Creative Commons
+Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+
+You are free to:
+- Share — copy and redistribute the addon in any medium or format.
+- Adapt — remix, transform, and build upon the addon.
+
+Under the following terms:
+- Attribution — You must give appropriate credit, provide a link to the
+  original addon page, and indicate if changes were made.
+- NonCommercial — You may not use the addon for commercial purposes.
+  You may not sell it, include it in paid compilations, or require
+  payment/donations to access it.
+
+For more information, see:
+https://creativecommons.org/licenses/by-nc/4.0/

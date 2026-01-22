@@ -1,0 +1,11 @@
+## Interface: 120000,120001
+## Title: Cursor of Power
+## Notes: A magical ring that enhances cursor visibility.
+## Author: Bobbels
+## Version: 1.2.0
+## IconTexture: Interface\AddOns\CursorOfPower\CursorOfPowerIcon.tga
+## SavedVariables: CursorOfPowerDB
+## License: CC BY-NC 4.0
+
+
+CursorOfPower.lua
