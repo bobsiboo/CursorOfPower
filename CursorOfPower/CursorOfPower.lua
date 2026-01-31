@@ -1,5 +1,6 @@
 -- CursorOfPower.lua
--- Version 1.3: ring + sparkles + minimap toggle (fixed)
+-- Version 1.3.1
+
 
 local addonName = ...
 
@@ -7,56 +8,59 @@ local addonName = ...
 -- CONFIG
 ------------------------------------------------------------
 
--- Ring size (30 is nice)
 local RING_SIZE = 30
-
--- Ring texture
 local RING_TEXTURE = "Interface\\AddOns\\CursorOfPower\\media\\Circle.tga"
 
--- Ring color
-local RING_COLOR = { 1, 1, 1, 1 } -- white
+-- Base/default ring color
+local BASE_RING_COLOR = { 1, 1, 1, 1 }
 
--- Sparkle textures
+-- Current color and interpolation target
+local currentRingColor = { unpack(BASE_RING_COLOR) }
+local targetRingColor  = { unpack(BASE_RING_COLOR) }
+
+local COLOR_TRANSITION_TIME = 0.08
+
 local SPARKLE_TEXTURES = {
     "Interface\\AddOns\\CursorOfPower\\media\\sparkle1.tga",
     "Interface\\AddOns\\CursorOfPower\\media\\sparkle2.tga",
     "Interface\\AddOns\\CursorOfPower\\media\\sparkle3.tga",
 }
 
--- Sparkle settings
-local SPARKLE_SIZE           = 16     -- base size
-local SPARKLE_LIFETIME       = 0.35   -- seconds each sparkle lives
-local SPARKLE_SPAWN_INTERVAL = 0.035  -- seconds between spawns
+-- Sparkle parameters
+local SPARKLE_SIZE           = 16
+local SPARKLE_LIFETIME       = 0.35
+local SPARKLE_SPAWN_INTERVAL = 0.035
 local SPARKLE_START_ALPHA    = 0.9
 local SPARKLE_END_ALPHA      = 0.0
-local SPARKLE_MIN_SCALE      = 0.6    -- shrink to ~60% size over lifetime
+local SPARKLE_MIN_SCALE      = 0.6
+
+-- Elite sparkle enhancements
+local ELITE_SPARKLE_SIZE_MULT   = 1.6
+local ELITE_SPARKLE_BRIGHT_MULT = 1.4
 
 ------------------------------------------------------------
--- SAVED VARIABLES (defaults)
+-- SAVED VARIABLES
 ------------------------------------------------------------
 
 CursorOfPowerDB = CursorOfPowerDB or nil
 local db = {
-    enableRing     = true,
-    enableSparkles = true,
+    enableRing        = true,
+    enableSparkles    = true,
+    enableTargetColor = false,
+    minimapAngle      = 45,
 }
 
 local function ApplyDefaults(existing)
     if not existing then existing = {} end
-    if existing.enableRing == nil then
-        existing.enableRing = true
-    end
-    if existing.enableSparkles == nil then
-        existing.enableSparkles = true
-    end
-    if existing.minimapAngle == nil then
-        existing.minimapAngle = 45 -- default position (45° around the minimap)
-    end
+    if existing.enableRing == nil then existing.enableRing = true end
+    if existing.enableSparkles == nil then existing.enableSparkles = true end
+    if existing.enableTargetColor == nil then existing.enableTargetColor = false end
+    if existing.minimapAngle == nil then existing.minimapAngle = 45 end
     return existing
 end
 
 ------------------------------------------------------------
--- MAIN RING FRAME (purely visual)
+-- RING FRAME
 ------------------------------------------------------------
 
 local ringFrame = CreateFrame("Frame", "CursorOfPowerFrame", UIParent)
@@ -68,9 +72,7 @@ local ringTex = ringFrame:CreateTexture(nil, "OVERLAY")
 ringTex:SetAllPoints(true)
 ringTex:SetTexture(RING_TEXTURE)
 ringTex:SetBlendMode("BLEND")
-ringTex:SetVertexColor(unpack(RING_COLOR))
-
-ringFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+ringTex:SetVertexColor(unpack(currentRingColor))
 
 local function UpdateRingVisibility()
     if db.enableRing then
@@ -81,7 +83,17 @@ local function UpdateRingVisibility()
 end
 
 ------------------------------------------------------------
--- SPARKLE SYSTEM
+-- UTILITY: ELITE DETECTION
+------------------------------------------------------------
+
+local function IsEliteMouseover()
+    if not UnitExists("mouseover") then return false end
+    local c = UnitClassification("mouseover")
+    return (c == "elite" or c == "rareelite" or c == "worldboss")
+end
+
+------------------------------------------------------------
+-- SPARKLES
 ------------------------------------------------------------
 
 local sparklePool = {}
@@ -101,7 +113,6 @@ local function AcquireSparkle()
         tex:SetBlendMode("ADD")
         sparkle.tex = tex
     end
-
     sparkle:Show()
     return sparkle
 end
@@ -115,55 +126,83 @@ end
 
 local function ClearAllSparkles()
     for i = #activeSparkles, 1, -1 do
-        local s = activeSparkles[i]
-        ReleaseSparkle(s)
+        ReleaseSparkle(activeSparkles[i])
         activeSparkles[i] = nil
     end
 end
 
+-- Spawn a new sparkle at cursor position
 local function SpawnSparkle(x, y)
-    if not db.enableSparkles then
-        return
-    end
+    if not db.enableSparkles then return end
 
     local sparkle = AcquireSparkle()
-
-    -- Pick random sparkle texture
     local texPath = SPARKLE_TEXTURES[math.random(#SPARKLE_TEXTURES)]
     sparkle.tex:SetTexture(texPath)
 
-    -- Position near cursor
     sparkle:ClearAllPoints()
     local dx = (math.random() - 0.5) * 8
     local dy = (math.random() - 0.5) * 8
     sparkle:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x + dx, y + dy)
 
-    -- Random size variation
-    local sizeVar = 0.7 + math.random() * 0.6 -- 0.7–1.3
+    local sizeVar = 0.7 + math.random() * 0.6
+    if IsEliteMouseover() then
+        sizeVar = sizeVar * ELITE_SPARKLE_SIZE_MULT
+    end
     sparkle:SetSize(SPARKLE_SIZE * sizeVar, SPARKLE_SIZE * sizeVar)
 
-    -- Lifespan
     sparkle.life    = SPARKLE_LIFETIME
     sparkle.maxLife = SPARKLE_LIFETIME
 
-    -- Alpha
-    sparkle.tex:SetVertexColor(1, 1, 1, SPARKLE_START_ALPHA)
+    sparkle.tex:SetVertexColor(
+        currentRingColor[1],
+        currentRingColor[2],
+        currentRingColor[3],
+        SPARKLE_START_ALPHA
+    )
 
     table.insert(activeSparkles, sparkle)
 end
 
 ------------------------------------------------------------
--- DRIVER FRAME (always runs OnUpdate)
+-- TARGET-BASED RING COLORING
+------------------------------------------------------------
+
+local function GetTargetColor()
+    local r, g, b, a = unpack(BASE_RING_COLOR)
+
+    if db.enableTargetColor and UnitExists("mouseover") then
+        if UnitIsEnemy("player", "mouseover") then
+            r, g, b = 1, 0.2, 0.2
+        elseif UnitIsFriend("player", "mouseover") then
+            r, g, b = 0.2, 1, 0.2
+        else
+            local reaction = UnitReaction("player", "mouseover")
+            if reaction == 4 then
+                r, g, b = 1, 1, 0.3
+            end
+        end
+    end
+
+    return r, g, b, a
+end
+
+local function SetTargetColorAsBase()
+    for i = 1, 4 do
+        currentRingColor[i] = BASE_RING_COLOR[i]
+        targetRingColor[i]  = BASE_RING_COLOR[i]
+    end
+    ringTex:SetVertexColor(unpack(currentRingColor))
+end
+
+------------------------------------------------------------
+-- FRAME UPDATES
 ------------------------------------------------------------
 
 local driver = CreateFrame("Frame")
 driver:SetScript("OnUpdate", function(self, elapsed)
     local x, y = GetCursorPosition()
-    if not x or not y then
-        return
-    end
+    if not x or not y then return end
 
-    -- Move ring (only if enabled)
     if db.enableRing then
         ringFrame:ClearAllPoints()
         ringFrame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
@@ -172,37 +211,51 @@ driver:SetScript("OnUpdate", function(self, elapsed)
         ringFrame:Hide()
     end
 
-    -- Sparkle spawning (only when enabled)
+    local tr, tg, tb, ta = GetTargetColor()
+    targetRingColor = { tr, tg, tb, ta }
+
+    local blend = math.min(1, elapsed / COLOR_TRANSITION_TIME)
+    for i = 1, 4 do
+        currentRingColor[i] =
+            currentRingColor[i] + (targetRingColor[i] - currentRingColor[i]) * blend
+    end
+    ringTex:SetVertexColor(unpack(currentRingColor))
+
     if db.enableSparkles then
-        sparkleTimer = sparkleTimer + (elapsed or 0)
+        sparkleTimer = sparkleTimer + elapsed
         while sparkleTimer >= SPARKLE_SPAWN_INTERVAL do
             SpawnSparkle(x, y)
             sparkleTimer = sparkleTimer - SPARKLE_SPAWN_INTERVAL
         end
     end
 
-    -- Sparkles ALWAYS update so they fade out even after disabling
+    local elite = IsEliteMouseover()
     for i = #activeSparkles, 1, -1 do
         local s = activeSparkles[i]
         s.life = s.life - elapsed
+
         if s.life <= 0 then
             ReleaseSparkle(s)
             table.remove(activeSparkles, i)
         else
-            local t = 1 - (s.life / s.maxLife) -- 0 at birth, 1 at end
-
-            -- Fade alpha
+            local t = 1 - (s.life / s.maxLife)
             local alpha = SPARKLE_START_ALPHA + (SPARKLE_END_ALPHA - SPARKLE_START_ALPHA) * t
-            s.tex:SetVertexColor(1, 1, 1, alpha)
 
-            -- Shrink over time
+            local r, g, b = unpack(currentRingColor)
+            if elite then
+                r = math.min(1, r * ELITE_SPARKLE_BRIGHT_MULT)
+                g = math.min(1, g * ELITE_SPARKLE_BRIGHT_MULT)
+                b = math.min(1, b * ELITE_SPARKLE_BRIGHT_MULT)
+            end
+
+            s.tex:SetVertexColor(r, g, b, alpha)
+
             local scale = 1 - (1 - SPARKLE_MIN_SCALE) * t
             local size  = SPARKLE_SIZE * scale
             s:SetSize(size, size)
         end
     end
 end)
-
 
 ------------------------------------------------------------
 -- MINIMAP BUTTON
@@ -211,33 +264,24 @@ end)
 local minimapButton = CreateFrame("Button", "CursorOfPowerMinimapButton", Minimap)
 minimapButton:SetSize(32, 32)
 minimapButton:SetFrameStrata("MEDIUM")
-minimapButton:SetFrameLevel(8)
-
--- Allow both clicks and dragging
 minimapButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 minimapButton:RegisterForDrag("LeftButton")
 
--- Border (round frame)
 local overlay = minimapButton:CreateTexture(nil, "OVERLAY")
 overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
 overlay:SetSize(54, 54)
 overlay:SetPoint("TOPLEFT", minimapButton, "TOPLEFT", 0, 0)
 
--- Icon inside the circle
 local icon = minimapButton:CreateTexture(nil, "BACKGROUND")
 icon:SetTexture("Interface\\AddOns\\CursorOfPower\\CursorOfPowerIcon.tga")
-icon:SetTexCoord(0.05, 0.95, 0.05, 0.95) -- crop corners so it fits the round frame
+icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
 icon:SetSize(20, 20)
 icon:SetPoint("CENTER", minimapButton, "CENTER", 1, 1)
 minimapButton.icon = icon
 
--- Position function using angle saved in db
 local function UpdateMinimapButtonPosition()
-    if not db or not Minimap then return end
-
     local angle = math.rad(db.minimapAngle or 45)
     local radius = (Minimap:GetWidth() / 2) + 5
-
     local x = math.cos(angle) * radius
     local y = math.sin(angle) * radius
 
@@ -245,35 +289,27 @@ local function UpdateMinimapButtonPosition()
     minimapButton:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
--- Tooltip
 local function UpdateTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
     GameTooltip:SetText("Cursor of Power", 1, 0.82, 0)
-    local ringStatus     = db.enableRing     and "|cff00ff00ON|r" or "|cffff0000OFF|r"
-    local sparklesStatus = db.enableSparkles and "|cff00ff00ON|r" or "|cffff0000OFF|r"
-    GameTooltip:AddLine("Left-click: Toggle circle (" .. ringStatus .. ")", 1, 1, 1)
-    GameTooltip:AddLine("Right-click: Toggle sparkles (" .. sparklesStatus .. ")", 1, 1, 1)
-    GameTooltip:AddLine("Drag with Left-click to move button.", 0.8, 0.8, 0.8)
+
+    local ring    = db.enableRing        and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local spark   = db.enableSparkles    and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local target  = db.enableTargetColor and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+
+    GameTooltip:AddLine("Left-click: Toggle circle (" .. ring .. ")", 1, 1, 1)
+    GameTooltip:AddLine("Right-click: Toggle sparkles (" .. spark .. ")", 1, 1, 1)
+    GameTooltip:AddLine("Alt+Right-click: Toggle target color (" .. target .. ")", 1, 1, 1)
+    GameTooltip:AddLine("Drag to move.", 0.8, 0.8, 0.8)
     GameTooltip:Show()
 end
 
-minimapButton:SetScript("OnEnter", function(self)
-    UpdateTooltip(self)
-end)
+minimapButton:SetScript("OnEnter", UpdateTooltip)
+minimapButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-minimapButton:SetScript("OnLeave", function()
-    GameTooltip:Hide()
-end)
-
--- Click handling (same ToggleRing / ToggleSparkles you already have)
 local function ToggleRing()
     db.enableRing = not db.enableRing
     UpdateRingVisibility()
-    if db.enableRing then
-        print("|cff00ffffCursor of Power|r: Circle enabled.")
-    else
-        print("|cff00ffffCursor of Power|r: Circle disabled.")
-    end
 end
 
 local function ToggleSparkles()
@@ -281,11 +317,12 @@ local function ToggleSparkles()
     if not db.enableSparkles then
         ClearAllSparkles()
     end
+end
 
-    if db.enableSparkles then
-        print("|cff00ffffCursor of Power|r: Sparkles enabled.")
-    else
-        print("|cff00ffffCursor of Power|r: Sparkles disabled.")
+local function ToggleTargetColor()
+    db.enableTargetColor = not db.enableTargetColor
+    if not db.enableTargetColor then
+        SetTargetColorAsBase()
     end
 end
 
@@ -293,7 +330,11 @@ minimapButton:SetScript("OnClick", function(self, button)
     if button == "LeftButton" then
         ToggleRing()
     elseif button == "RightButton" then
-        ToggleSparkles()
+        if IsAltKeyDown() then
+            ToggleTargetColor()
+        else
+            ToggleSparkles()
+        end
     end
 
     if GameTooltip:IsOwned(self) then
@@ -301,22 +342,14 @@ minimapButton:SetScript("OnClick", function(self, button)
     end
 end)
 
--- Drag logic: move around the minimap edge and save angle
-minimapButton:SetScript("OnDragStart", function(self)
-    self.isDragging = true
-end)
-
-minimapButton:SetScript("OnDragStop", function(self)
-    self.isDragging = false
-end)
+minimapButton:SetScript("OnDragStart", function(self) self.isDragging = true end)
+minimapButton:SetScript("OnDragStop", function(self) self.isDragging = false end)
 
 minimapButton:SetScript("OnUpdate", function(self)
     if not self.isDragging then return end
 
     local mx, my = Minimap:GetCenter()
     local cx, cy = GetCursorPosition()
-
-    -- Use Minimap's scale here, NOT UIParent's, or you'll get offset
     local scale = Minimap:GetEffectiveScale()
     cx, cy = cx / scale, cy / scale
 
@@ -326,13 +359,10 @@ minimapButton:SetScript("OnUpdate", function(self)
     UpdateMinimapButtonPosition()
 end)
 
--- Initial placement
 UpdateMinimapButtonPosition()
 
-
-
 ------------------------------------------------------------
--- EVENT HANDLER (LOAD SAVED SETTINGS)
+-- EVENT HANDLER
 ------------------------------------------------------------
 
 local eventFrame = CreateFrame("Frame")
@@ -345,6 +375,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 
         UpdateRingVisibility()
         UpdateMinimapButtonPosition()
+        SetTargetColorAsBase()
 
         self:UnregisterEvent("ADDON_LOADED")
     end
