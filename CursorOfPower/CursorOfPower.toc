@@ -2,7 +2,7 @@
 ## Title: Cursor of Power
 ## Notes: A magical ring that enhances cursor visibility.
 ## Author: Bobsiboo
-## Version: 1.3.1
+## Version: 1.4.0
 ## IconTexture: Interface\AddOns\CursorOfPower\CursorOfPowerIcon.tga
 ## SavedVariables: CursorOfPowerDB
 ## License: CC BY-NC 4.0

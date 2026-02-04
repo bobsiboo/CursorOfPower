@@ -1,0 +1,10 @@
+## Interface: 120000,120001
+## Title: Cursor of Power: Social
+## Notes: Social-aware rings for Cursor of Power.
+## Author: Bobsiboo
+## Version: 1.0.0
+## Dependencies: CursorOfPower
+## DefaultState: enabled
+
+CursorOfPower_SocialCache.lua
+CursorOfPower_Social.lua

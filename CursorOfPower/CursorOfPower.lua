@@ -1,6 +1,5 @@
 -- CursorOfPower.lua
--- Version 1.3.1
-
+-- Version 1.4
 
 local addonName = ...
 
@@ -11,10 +10,8 @@ local addonName = ...
 local RING_SIZE = 30
 local RING_TEXTURE = "Interface\\AddOns\\CursorOfPower\\media\\Circle.tga"
 
--- Base/default ring color
 local BASE_RING_COLOR = { 1, 1, 1, 1 }
 
--- Current color and interpolation target
 local currentRingColor = { unpack(BASE_RING_COLOR) }
 local targetRingColor  = { unpack(BASE_RING_COLOR) }
 
@@ -26,7 +23,6 @@ local SPARKLE_TEXTURES = {
     "Interface\\AddOns\\CursorOfPower\\media\\sparkle3.tga",
 }
 
--- Sparkle parameters
 local SPARKLE_SIZE           = 16
 local SPARKLE_LIFETIME       = 0.35
 local SPARKLE_SPAWN_INTERVAL = 0.035
@@ -34,9 +30,8 @@ local SPARKLE_START_ALPHA    = 0.9
 local SPARKLE_END_ALPHA      = 0.0
 local SPARKLE_MIN_SCALE      = 0.6
 
--- Elite sparkle enhancements
-local ELITE_SPARKLE_SIZE_MULT   = 1.6
-local ELITE_SPARKLE_BRIGHT_MULT = 1.4
+local ELITE_SPARKLE_SIZE_MULT   = 1.8
+local ELITE_SPARKLE_BRIGHT_MULT = 1.8
 
 ------------------------------------------------------------
 -- SAVED VARIABLES
@@ -60,6 +55,109 @@ local function ApplyDefaults(existing)
 end
 
 ------------------------------------------------------------
+-- PLUGIN API
+------------------------------------------------------------
+
+CursorOfPower = CursorOfPower or {}
+local COP = CursorOfPower
+
+COP.version      = "1.4.0"
+COP.currentColor = { unpack(BASE_RING_COLOR) } -- final color actually used
+
+-- Plugin update callbacks (for secondary rings, etc.)
+local updateCallbacks = {} -- [source] = function(x, y, size, r, g, b, a)
+
+function COP.RegisterUpdateCallback(source, func)
+    if type(source) ~= "string" or func ~= nil and type(func) ~= "function" then
+        return
+    end
+    updateCallbacks[source] = func
+end
+
+function COP.UnregisterUpdateCallback(source)
+    updateCallbacks[source] = nil
+end
+
+
+local sizeMultBySource      = {}
+local sparkleMultBySource   = {}
+local colorOverrideBySource = {}
+
+local glowTimeLeft = 0
+local glowTotal    = 0.001
+local glowIntensity = 0
+
+function COP.SetSizeMultiplier(source, mult)
+    if type(mult) ~= "number" or mult <= 0 then
+        sizeMultBySource[source] = nil
+    else
+        sizeMultBySource[source] = mult
+    end
+end
+
+function COP.SetSparkleDensityMultiplier(source, mult)
+    if type(mult) ~= "number" or mult <= 0 then
+        sparkleMultBySource[source] = nil
+    else
+        sparkleMultBySource[source] = mult
+    end
+end
+
+function COP.SetColorOverride(source, r, g, b, a)
+    if not r or not g or not b then
+        colorOverrideBySource[source] = nil
+    else
+        colorOverrideBySource[source] = { r, g, b, a or 1 }
+    end
+end
+
+function COP.ClearColorOverride(source)
+    colorOverrideBySource[source] = nil
+end
+
+local function GetEffectiveSizeMultiplier()
+    local m = 1
+    for _, v in pairs(sizeMultBySource) do
+        m = m * v
+    end
+    return m
+end
+
+local function GetEffectiveSparkleDensityMultiplier()
+    local m = 1
+    for _, v in pairs(sparkleMultBySource) do
+        m = m * v
+    end
+    return m
+end
+
+local function GetColorOverride()
+    -- Assumes at most one active source in normal use.
+    for _, v in pairs(colorOverrideBySource) do
+        return v[1], v[2], v[3], v[4]
+    end
+    return nil
+end
+
+function COP.TriggerGlow(intensity, duration)
+    glowIntensity = math.max(0, intensity or 1)
+    glowTotal     = math.max(0.05, duration or 0.3)
+    glowTimeLeft  = glowTotal
+end
+
+function COP.IsRingEnabled()
+    return db and db.enableRing
+end
+
+function COP.IsSparklesEnabled()
+    return db and db.enableSparkles
+end
+
+function COP.IsTargetColorEnabled()
+    return db and db.enableTargetColor
+end
+
+------------------------------------------------------------
 -- RING FRAME
 ------------------------------------------------------------
 
@@ -73,14 +171,6 @@ ringTex:SetAllPoints(true)
 ringTex:SetTexture(RING_TEXTURE)
 ringTex:SetBlendMode("BLEND")
 ringTex:SetVertexColor(unpack(currentRingColor))
-
-local function UpdateRingVisibility()
-    if db.enableRing then
-        ringFrame:Show()
-    else
-        ringFrame:Hide()
-    end
-end
 
 ------------------------------------------------------------
 -- UTILITY: ELITE DETECTION
@@ -131,7 +221,6 @@ local function ClearAllSparkles()
     end
 end
 
--- Spawn a new sparkle at cursor position
 local function SpawnSparkle(x, y)
     if not db.enableSparkles then return end
 
@@ -148,7 +237,9 @@ local function SpawnSparkle(x, y)
     if IsEliteMouseover() then
         sizeVar = sizeVar * ELITE_SPARKLE_SIZE_MULT
     end
-    sparkle:SetSize(SPARKLE_SIZE * sizeVar, SPARKLE_SIZE * sizeVar)
+
+    local sizeMult = GetEffectiveSizeMultiplier()
+    sparkle:SetSize(SPARKLE_SIZE * sizeVar * sizeMult, SPARKLE_SIZE * sizeVar * sizeMult)
 
     sparkle.life    = SPARKLE_LIFETIME
     sparkle.maxLife = SPARKLE_LIFETIME
@@ -192,6 +283,17 @@ local function SetTargetColorAsBase()
         targetRingColor[i]  = BASE_RING_COLOR[i]
     end
     ringTex:SetVertexColor(unpack(currentRingColor))
+    for i = 1, 4 do
+        COP.currentColor[i] = currentRingColor[i]
+    end
+end
+
+local function UpdateRingVisibility()
+    if db.enableRing then
+        ringFrame:Show()
+    else
+        ringFrame:Hide()
+    end
 end
 
 ------------------------------------------------------------
@@ -203,6 +305,19 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     local x, y = GetCursorPosition()
     if not x or not y then return end
 
+    local sizeMult = GetEffectiveSizeMultiplier()
+
+    local glowScale = 1
+    if glowTimeLeft > 0 then
+        glowTimeLeft = glowTimeLeft - elapsed
+        if glowTimeLeft < 0 then glowTimeLeft = 0 end
+        local f = glowTimeLeft / glowTotal
+        glowScale = 1 + 0.25 * glowIntensity * f
+    end
+
+    local finalSize = RING_SIZE * sizeMult * glowScale
+    ringFrame:SetSize(finalSize, finalSize)
+
     if db.enableRing then
         ringFrame:ClearAllPoints()
         ringFrame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
@@ -212,20 +327,44 @@ driver:SetScript("OnUpdate", function(self, elapsed)
     end
 
     local tr, tg, tb, ta = GetTargetColor()
-    targetRingColor = { tr, tg, tb, ta }
+    targetRingColor[1], targetRingColor[2], targetRingColor[3], targetRingColor[4] = tr, tg, tb, ta
 
     local blend = math.min(1, elapsed / COLOR_TRANSITION_TIME)
     for i = 1, 4 do
-        currentRingColor[i] =
-            currentRingColor[i] + (targetRingColor[i] - currentRingColor[i]) * blend
+        currentRingColor[i] = currentRingColor[i] + (targetRingColor[i] - currentRingColor[i]) * blend
     end
-    ringTex:SetVertexColor(unpack(currentRingColor))
+
+    local orr, org, orb, ora = GetColorOverride()
+    local fr, fg, fb, fa
+    if orr then
+        fr, fg, fb, fa = orr, org, orb, ora
+    else
+        fr, fg, fb, fa = currentRingColor[1], currentRingColor[2], currentRingColor[3], currentRingColor[4]
+    end
+
+    ringTex:SetVertexColor(fr, fg, fb, fa)
+
+    COP.currentColor[1] = fr
+    COP.currentColor[2] = fg
+    COP.currentColor[3] = fb
+    COP.currentColor[4] = fa
+
+        -- Notify registered plugins (secondary rings, etc.)
+    if next(updateCallbacks) ~= nil then
+        -- x, y are already in screen space; finalSize is the ring size in pixels
+        for _, cb in pairs(updateCallbacks) do
+            cb(x, y, finalSize, fr, fg, fb, fa)
+        end
+    end
+
 
     if db.enableSparkles then
+        local densityMult = GetEffectiveSparkleDensityMultiplier()
+        local spawnInterval = SPARKLE_SPAWN_INTERVAL / math.max(0.1, densityMult)
         sparkleTimer = sparkleTimer + elapsed
-        while sparkleTimer >= SPARKLE_SPAWN_INTERVAL do
+        while sparkleTimer >= spawnInterval do
             SpawnSparkle(x, y)
-            sparkleTimer = sparkleTimer - SPARKLE_SPAWN_INTERVAL
+            sparkleTimer = sparkleTimer - spawnInterval
         end
     end
 
@@ -241,7 +380,7 @@ driver:SetScript("OnUpdate", function(self, elapsed)
             local t = 1 - (s.life / s.maxLife)
             local alpha = SPARKLE_START_ALPHA + (SPARKLE_END_ALPHA - SPARKLE_START_ALPHA) * t
 
-            local r, g, b = unpack(currentRingColor)
+            local r, g, b = COP.currentColor[1], COP.currentColor[2], COP.currentColor[3]
             if elite then
                 r = math.min(1, r * ELITE_SPARKLE_BRIGHT_MULT)
                 g = math.min(1, g * ELITE_SPARKLE_BRIGHT_MULT)
@@ -251,7 +390,7 @@ driver:SetScript("OnUpdate", function(self, elapsed)
             s.tex:SetVertexColor(r, g, b, alpha)
 
             local scale = 1 - (1 - SPARKLE_MIN_SCALE) * t
-            local size  = SPARKLE_SIZE * scale
+            local size  = SPARKLE_SIZE * scale * sizeMult
             s:SetSize(size, size)
         end
     end
@@ -343,7 +482,7 @@ minimapButton:SetScript("OnClick", function(self, button)
 end)
 
 minimapButton:SetScript("OnDragStart", function(self) self.isDragging = true end)
-minimapButton:SetScript("OnDragStop", function(self) self.isDragging = false end)
+minimapButton:SetScript("OnDragStop",  function(self) self.isDragging = false end)
 
 minimapButton:SetScript("OnUpdate", function(self)
     if not self.isDragging then return end
@@ -372,6 +511,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == addonName then
         CursorOfPowerDB = ApplyDefaults(CursorOfPowerDB)
         db = CursorOfPowerDB
+        COP.db = db
 
         UpdateRingVisibility()
         UpdateMinimapButtonPosition()
