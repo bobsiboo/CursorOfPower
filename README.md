@@ -22,3 +22,6 @@ Optional Sparkle Trail
     2 Copy the CursorOfPower folder to  <path to your wow folder>\World of Warcraft\_retail_\Interface\AddOns
     3 restart the game or type /reload in chat if the game is already running.
 
+
+CursorOfPower_Social  is a plugin for the core addon that adds visibility for friends and guildmates.
+A separate ring will show to visualise people are in your guild or on your friend list.
