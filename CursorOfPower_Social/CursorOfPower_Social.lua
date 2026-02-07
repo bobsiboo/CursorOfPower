@@ -160,7 +160,25 @@ end
 -- Update functions
 ------------------------------------------------------------
 
-local lastGUID
+local function GetTrackedUnitKey(unit)
+    if not UnitExists(unit) or not UnitIsPlayer(unit) then
+        return nil
+    end
+
+    local name, realm = UnitName(unit)
+    if not name then
+        return nil
+    end
+
+    -- Include realm if available to avoid collisions
+    if realm and realm ~= "" then
+        return name .. "-" .. realm
+    end
+
+    return name
+end
+
+local lastUnitKey
 
 local function UpdateSocialRings(unit)
     if not UnitExists(unit) or not UnitIsPlayer(unit) then
@@ -185,7 +203,6 @@ local function UpdateSocialFramePosition()
     local x, y = GetCursorPosition()
     if not x then return end
 
-    -- Match the core addon's coordinate style (no scale division)
     socialFrame:ClearAllPoints()
     socialFrame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
 
@@ -216,10 +233,12 @@ driver:SetScript("OnUpdate", function()
         return
     end
 
-    local guid = UnitGUID(TRACKED_UNIT)
-    if guid ~= lastGUID then
-        lastGUID = guid
-        if guid then
+    -- Use a safe key instead of GUID (GUID is a secret value now)
+    local unitKey = GetTrackedUnitKey(TRACKED_UNIT)
+
+    if unitKey ~= lastUnitKey then
+        lastUnitKey = unitKey
+        if unitKey then
             UpdateSocialRings(TRACKED_UNIT)
         else
             socialFrame:Hide()
@@ -232,3 +251,4 @@ driver:SetScript("OnUpdate", function()
 end)
 
 dprint("CursorOfPower_Social.lua loaded, driver active")
+
