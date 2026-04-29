@@ -1,5 +1,5 @@
 -- CursorOfPower.lua
--- Version 1.4
+-- Version 1.4.1
 
 local addonName = ...
 
@@ -61,7 +61,7 @@ end
 CursorOfPower = CursorOfPower or {}
 local COP = CursorOfPower
 
-COP.version      = "1.4.0"
+COP.version      = "1.4.1"
 COP.currentColor = { unpack(BASE_RING_COLOR) } -- final color actually used
 
 -- Plugin update callbacks (for secondary rings, etc.)

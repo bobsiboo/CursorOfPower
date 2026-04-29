@@ -26,10 +26,10 @@ local function dprint(...)
 end
 
 ------------------------------------------------------------
--- Core compatibility (requires CursorOfPower >= 1.4.0)
+-- Core compatibility (requires CursorOfPower >= 1.4.1)
 ------------------------------------------------------------
 
-local REQUIRED_CORE_VERSION = "1.4.0"
+local REQUIRED_CORE_VERSION = "1.4.1"
 local compatOK = false
 
 local function ParseVersion(v)
